@@ -1,9 +1,8 @@
-// src/pages/ChatPage.jsx (FINAL - ANTI LAG DELETE)
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import socket from '../socket';
-import '../chat.css';
+import '../Chat.css';
 import AddContactModal from '../Components/AddContactModal';
 import ProfileModal from '../Components/ProfileModal';
 import ContactInfoModal from '../Components/ContactInfoModal';
@@ -66,7 +65,7 @@ export default function ChatPage() {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [typingUser, setTypingUser] = useState(null);
 
-  // STATE CALL
+  // STATE CALL (Video/Voice)
   const [stream, setStream] = useState(null);
   const [receivingCall, setReceivingCall] = useState(false);
   const [caller, setCaller] = useState("");
@@ -74,17 +73,19 @@ export default function ChatPage() {
   const [callAccepted, setCallAccepted] = useState(false);
   const [callEnded, setCallEnded] = useState(false);
   const [nameCaller, setNameCaller] = useState("");
-  const [isVideoCall, setIsVideoCall] = useState(true);
+  const [isVideoCall, setIsVideoCall] = useState(true); // State tipe panggilan
 
   // STATE KUSTOMISASI
   const [myBubbleColor, setMyBubbleColor] = useState(localStorage.getItem('bubbleColor') || '#dcf8c6'); 
   const [chatBg, setChatBg] = useState(localStorage.getItem('chatBg') || 'https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png');
   
+  // REFS
   const messageListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const contactsRef = useRef(contacts);
   const incomingChatsRef = useRef(incomingChats);
   const activeChatRef = useRef(activeChat);
+  
   const myVideo = useRef();
   const userVideo = useRef();
   const connectionRef = useRef();
@@ -93,6 +94,7 @@ export default function ChatPage() {
   useEffect(() => { incomingChatsRef.current = incomingChats; }, [incomingChats]);
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
 
+  // --- FETCH DATA ---
   const fetchData = async () => {
     try {
       const resContacts = await getContacts();
@@ -106,23 +108,26 @@ export default function ChatPage() {
     } catch (err) { console.error(err); }
   };
 
+  // --- SOCKET & LOGIC UTAMA ---
   useEffect(() => {
     if (!user) return;
     socket.connect();
     fetchData();
 
+    // Listener Call (Menangani Video vs Voice)
     socket.on("callUser", (data) => {
       setReceivingCall(true);
       setCaller(data.from);
       setNameCaller(data.name);
       setCallerSignal(data.signal);
-      setIsVideoCall(data.isVideoCall);
+      setIsVideoCall(data.isVideoCall); // <-- Simpan tipe panggilan dari penelpon
     });
     socket.on("callEnded", () => leaveCall());
 
     const handleNewMessage = (newMessage) => {
       const { chat_id, sender_id } = newMessage;
       setMessages((prev) => ({ ...prev, [chat_id]: [...(prev[chat_id] || []), newMessage] }));
+      
       if (sender_id !== user.id) {
         socket.emit('markAsDelivered', { messageId: newMessage.id, chatId: chat_id });
         if (activeChatRef.current && activeChatRef.current.chat_id === chat_id) { 
@@ -130,6 +135,8 @@ export default function ChatPage() {
         }
       }
       setTypingUser(null);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      
       const known = contactsRef.current.some(c => c.chat_id === chat_id) || groups.some(g => g.id === chat_id) || incomingChatsRef.current.some(c => c.chat_id === chat_id);
       if (known || sender_id === user.id) return;
       getChatDetails(chat_id).then(res => {
@@ -138,7 +145,6 @@ export default function ChatPage() {
       });
     };
 
-    // Socket Delete Listener (Untuk update dari orang lain)
     socket.on('messageDeleted', ({ messageId, chatId }) => {
        setMessages(prev => {
           if (!prev[chatId]) return prev;
@@ -150,7 +156,14 @@ export default function ChatPage() {
     });
     
     socket.on('newMessage', handleNewMessage);
-    socket.on('userTyping', (data) => { if (activeChatRef.current?.chat_id === data.chatId) { if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current); const info = getBubbleInfo(data.senderId, data.username); setTypingUser(info.name); typingTimeoutRef.current = setTimeout(() => setTypingUser(null), 3000); } });
+    socket.on('userTyping', (data) => { 
+        if (activeChatRef.current?.chat_id === data.chatId) { 
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current); 
+            const info = getBubbleInfo(data.senderId, data.username); 
+            setTypingUser(info.name); 
+            typingTimeoutRef.current = setTimeout(() => setTypingUser(null), 3000); 
+        } 
+    });
     socket.on('messagesRead', ({ chatId }) => setMessages(prev => ({...prev, [chatId]: (prev[chatId]||[]).map(m => ({...m, is_read:true, is_delivered:true}))})));
     socket.on('messageStatusUpdate', ({ messageId, status }) => { if(status==='delivered') setMessages(prev => { const n={...prev}; for(let cid in n) n[cid]=n[cid].map(m=>m.id===messageId?{...m, is_delivered:true}:m); return n; }); });
     socket.on('onlineUsersList', (ids) => setOnlineUsers(new Set(ids)));
@@ -170,29 +183,47 @@ export default function ChatPage() {
 
   useEffect(() => { if (messageListRef.current) messageListRef.current.scrollTop = messageListRef.current.scrollHeight; }, [messages, activeChat, replyingTo]);
 
-  // --- FUNCTION CALL (FIXED) ---
+  // --- LOGIKA CALL (FIXED VIDEO vs VOICE) ---
   const handleCall = (isVid) => {
      if (!activeChat || activeChat.is_group) return alert("Panggilan grup belum tersedia");
      setIsVideoCall(isVid);
+     
+     // Jika Voice Call, video: false
      navigator.mediaDevices.getUserMedia({ video: isVid, audio: true }).then((stream) => {
         setStream(stream);
         setCallEnded(false);
         if(myVideo.current) myVideo.current.srcObject = stream;
+        
         const peer = new SimplePeer({ initiator: true, trickle: false, stream: stream });
-        peer.on("signal", (data) => socket.emit("callUser", { userToCall: activeChat.id, signalData: data, from: user.id, name: user.username, isVideoCall: isVid }));
+        
+        peer.on("signal", (data) => {
+           socket.emit("callUser", { 
+             userToCall: activeChat.id, 
+             signalData: data, 
+             from: user.id, 
+             name: user.username, 
+             isVideoCall: isVid // Kirim tipe call
+           });
+        });
+        
         peer.on("stream", (stream) => { if(userVideo.current) userVideo.current.srcObject = stream; });
         socket.on("callAccepted", (signal) => { setCallAccepted(true); peer.signal(signal); });
         connectionRef.current = peer;
+        
+        // --- CATAT RIWAYAT ---
         const callText = isVid ? "📹 Panggilan Video" : "📞 Panggilan Suara";
         socket.emit('sendMessage', { chatId: activeChat.chat_id, content: callText, type: 'call_history' });
+        
      }).catch(e => alert("Gagal akses media: " + e));
   };
 
   const answerCall = () => {
     setCallAccepted(true);
+    // Jawab sesuai tipe panggilan yang diterima
     navigator.mediaDevices.getUserMedia({ video: isVideoCall, audio: true }).then((stream) => {
       setStream(stream);
       if(myVideo.current) myVideo.current.srcObject = stream;
+      
       const peer = new SimplePeer({ initiator: false, trickle: false, stream: stream });
       peer.on("signal", (data) => socket.emit("answerCall", { signal: data, to: caller }));
       peer.on("stream", (stream) => { if(userVideo.current) userVideo.current.srcObject = stream; });
@@ -209,6 +240,7 @@ export default function ChatPage() {
     if(caller) socket.emit("endCall", { to: caller });
     window.location.reload();
   };
+  // -------------------
 
   const handleSelectChat=async(i)=>{setReplyingTo(null);if(i.type==='contact'&&!i.chat_id){try{const r=await findOrCreateChat(i.user_id);const c=r.data.chat_id;setContacts(p=>p.map(x=>x.id===i.id?{...x,chat_id:c}:x));setActiveChat({...i,chat_id:c});loadMessages(c);}catch(e){}}else{setActiveChat(i);loadMessages(i.chat_id);}};
   const loadMessages=async(c)=>{socket.emit('joinRoom',c);try{const r=await getMessagesForChat(c);setMessages(p=>({...p,[c]:r.data}));socket.emit('markAsRead',{chatId:c});}catch(e){}};
@@ -221,33 +253,38 @@ export default function ChatPage() {
     const isMe = msg.sender_id === user.id;
     const isAdmin = activeChat.is_group && activeChat.role === 'admin';
     let mode = null;
+    
     if (isMe || isAdmin) {
        const choice = prompt("Ketik '1' Hapus Untuk Saya\nKetik '2' Hapus Untuk Semua");
        if (choice === '1') mode = 'me'; else if (choice === '2') mode = 'everyone'; else return;
     } else {
-       if(!confirm("Hapus?")) return;
+       if(!confirm("Hapus pesan ini untuk saya?")) return;
        mode = 'me';
     }
 
-    // 1. UPDATE UI DULUAN (INSTAN)
-    setMessages(prev => {
+    try {
+      // 1. Panggil API
+      await deleteMessage(msg.id, mode);
+      
+      // 2. UPDATE TAMPILAN SECARA INSTAN (Optimistic)
+      setMessages(prev => {
         const chatId = activeChat.chat_id;
         const currentList = prev[chatId] || [];
         if (mode === 'everyone') {
-            return { ...prev, [chatId]: currentList.map(m => m.id === msg.id ? { ...m, is_deleted: true, content: '🚫 Pesan ini telah dihapus', deleted_by: user.id, deleter_name: user.username } : m) };
+            return {
+                ...prev,
+                [chatId]: currentList.map(m => m.id === msg.id ? { ...m, is_deleted: true, content: '🚫 Pesan ini telah dihapus', deleted_by: user.id, deleter_name: user.username } : m)
+            };
         } else {
             return { ...prev, [chatId]: currentList.filter(m => m.id !== msg.id) };
         }
-    });
+      });
 
-    try {
-      // 2. BARU KIRIM KE SERVER
-      await deleteMessage(msg.id, mode);
-      if (mode === 'everyone') socket.emit('messageDeletedEveryone', { chatId: activeChat.chat_id, messageId: msg.id });
-    } catch (err) { 
-        alert("Gagal menghapus (Rollback needed)"); 
-        // Jika mau ideal, di sini kita harus undo state, tapi untuk sekarang alert cukup.
-    }
+      // 3. Kirim Socket jika hapus semua
+      if (mode === 'everyone') {
+         socket.emit('messageDeletedEveryone', { chatId: activeChat.chat_id, messageId: msg.id });
+      }
+    } catch (err) { alert("Gagal menghapus (Rollback needed)"); console.error(err); }
   };
   
   const onEmojiClick = (emoji) => setMessageInput(p => p + emoji.emoji);
@@ -255,7 +292,20 @@ export default function ChatPage() {
   const handleHeaderClick=()=>{if(activeChat.is_group)setShowGroupInfo(true);else setShowContactInfo(true);};
   const changeMyColor=()=>{const c=prompt("Warna hex (cth: #ffcc00):",myBubbleColor);if(c){setMyBubbleColor(c);localStorage.setItem('bubbleColor',c);}};
   const handleBgUpload=(e)=>{const f=e.target.files[0];if(f){const u=URL.createObjectURL(f);setChatBg(u);localStorage.setItem('chatBg',u);setShowMenu(false);}};
-  const renderReplyPreview=()=>{if(!replyingTo)return null;const info=getBubbleInfo(replyingTo.sender_id,replyingTo.username||'Seseorang');return(<div style={{background:'#f0f2f5',padding:'5px 10px',borderLeft:'5px solid #008069',display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'5px'}}><div style={{fontSize:'12px',color:'#555',flex:1}}><div style={{color:'#008069',fontWeight:'bold'}}>Membalas {info.name}</div><div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'300px'}}>{replyingTo.type==='image'?'📷 Foto':replyingTo.content}</div></div><button onClick={()=>setReplyingTo(null)} style={{border:'none',background:'transparent',fontSize:'16px',cursor:'pointer',marginLeft:'10px'}}>✖</button></div>)};
+  
+  const renderReplyPreview = () => {
+    if (!replyingTo) return null;
+    const info = getBubbleInfo(replyingTo.sender_id, replyingTo.username || 'Seseorang');
+    return (
+      <div style={{background:'#f0f2f5', padding:'5px 10px', borderLeft:'5px solid #008069', display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'5px'}}>
+         <div style={{fontSize:'12px', color:'#555', flex:1}}>
+            <div style={{color:'#008069', fontWeight:'bold'}}>Membalas {info.name}</div>
+            <div style={{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'300px'}}>{replyingTo.type==='image'?'📷 Foto':replyingTo.content}</div>
+         </div>
+         <button onClick={()=>setReplyingTo(null)} style={{border:'none',background:'transparent',fontSize:'16px',cursor:'pointer',marginLeft:'10px'}}>✖</button>
+      </div>
+    )
+  };
 
   if (!user) return <div>Loading...</div>;
   const currentMessages = activeChat ? messages[activeChat.chat_id] || [] : [];
@@ -264,6 +314,7 @@ export default function ChatPage() {
 
   return (
     <>
+      {/* --- CALL UI OVERLAY --- */}
       {((stream || receivingCall || callAccepted) && !callEnded) && (
         <div className="call-container">
            {receivingCall && !callAccepted ? (
@@ -304,6 +355,7 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="search-bar"><div className="search-input-wrapper"><input type="text" placeholder="Cari" disabled /></div></div>
+          
           <div className="contact-list">
              <div style={{padding:'10px 16px', fontWeight:'bold', color:'#008069', display:'flex', justifyContent:'space-between'}}>GRUP <button onClick={()=>setShowGroupModal(true)} style={{border:'none',background:'transparent',cursor:'pointer',color:'#008069',fontSize:'1.2em'}}>+</button></div>
              {groups.map(item => (<div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><img src={item.group_icon_url || "https://via.placeholder.com/40?text=G"} className="contact-avatar"/><div className="contact-info"><div className="contact-name">{item.display_name}</div></div></div>))}
@@ -323,8 +375,8 @@ export default function ChatPage() {
                     <div className="header-status">{activeChat.is_group ? 'Klik info grup' : (onlineUsers.has(activeChat.id)?'Online':'')}</div>
                  </div>
                  <div style={{marginLeft:'auto', display:'flex', gap:'15px', color:'#54656f'}}>
-                    <button onClick={(e)=>{e.stopPropagation(); handleCall(true)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}}>📹</button>
-                    <button onClick={(e)=>{e.stopPropagation(); handleCall(false)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}}>📞</button>
+                    <button onClick={(e)=>{e.stopPropagation(); handleCall(true)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}} title="Video Call">📹</button>
+                    <button onClick={(e)=>{e.stopPropagation(); handleCall(false)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}} title="Voice Call">📞</button>
                  </div>
               </div>
               
@@ -343,8 +395,9 @@ export default function ChatPage() {
                            {msg.reply_to_id && (<div style={{background:'rgba(0,0,0,0.05)', padding:'5px', borderRadius:'5px', borderLeft:'4px solid #008069', marginBottom:'5px', fontSize:'12px', cursor:'pointer'}}><div style={{color:'#008069', fontWeight:'bold'}}>{msg.reply_username || "Seseorang"}</div><div style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{msg.reply_content}</div></div>)}
                            {(!isMe && activeChat.is_group) && <div className="bubble-name" style={{color: getNameColor(bubbleInfo.name)}}>{bubbleInfo.name}</div>}
                            
+                           {/* KONTEN PESAN (TERMASUK CALL HISTORY) */}
                            {msg.is_deleted ? <i style={{color:'#888'}}>🚫 Pesan dihapus {msg.deleter_name && `oleh ${msg.deleter_name}`}</i> 
-                           : msg.type === 'call_history' ? <div className="bubble-system-call">{msg.content.includes('Video') ? '📹' : '📞'} {msg.content}</div>
+                           : msg.type === 'call_history' ? <div className="bubble-system-call" style={{background:'#e1f3fb', padding:'8px 15px', borderRadius:'8px', fontSize:'13px', display:'flex', alignItems:'center', gap:'8px', border:'1px solid #b3e5fc'}}>{msg.content.includes('Video')?'📹':'📞'} {msg.content}</div>
                            : msg.type === 'image' ? <img src={msg.content} style={{maxWidth:'100%', borderRadius:'8px', cursor:'pointer'}} onClick={()=>window.open(msg.content)} /> 
                            : msg.type === 'video' ? <video src={msg.content} controls style={{maxWidth:'100%', borderRadius:'8px'}} /> 
                            : msg.type === 'file' ? <a href={msg.content} target="_blank" rel="noreferrer" style={{textDecoration:'none', color:'#333'}}>📄 {msg.content.split('/').pop().substr(14)}</a> 
