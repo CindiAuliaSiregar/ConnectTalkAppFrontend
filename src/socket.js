@@ -1,7 +1,7 @@
 // src/socket.js (VERSI BARU)
 import { io } from 'socket.io-client';
 
-const URL = 'http://localhost:3001';
+const URL = 'https://reportorially-unpsychopathic-sona.ngrok-free.dev';
 
 // Buat instance socket
 const socket = io(URL, {
