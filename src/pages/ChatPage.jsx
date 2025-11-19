@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import socket from '../socket';
-import '../Chat.css';
+import '../chat.css';
 import AddContactModal from '../Components/AddContactModal';
 import ProfileModal from '../Components/ProfileModal';
 import ContactInfoModal from '../Components/ContactInfoModal';
