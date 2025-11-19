@@ -284,15 +284,40 @@ export default function ChatPage() {
       if (mode === 'everyone') {
          socket.emit('messageDeletedEveryone', { chatId: activeChat.chat_id, messageId: msg.id });
       }
-    } catch (err) { alert("Gagal menghapus (Rollback needed)"); console.error(err); }
+    } catch (err) { alert("Gagal menghapus"); console.error(err); }
   };
   
   const onEmojiClick = (emoji) => setMessageInput(p => p + emoji.emoji);
-  const getBubbleInfo=(sid,dun)=>{if(sid===user.id)return{name:user.username,pic:user.profile_pic_url};const s=contacts.find(c=>c.user_id===sid);if(s)return{name:s.display_name,pic:s.profile_pic_url,bio:s.bio,custom_id:s.custom_id};const i=incomingChats.find(c=>c.id===sid);if(i)return{name:i.display_name,pic:i.profile_pic_url,bio:i.bio,custom_id:i.custom_id};return{name:dun||"User",pic:null};};
-  const handleHeaderClick=()=>{if(activeChat.is_group)setShowGroupInfo(true);else setShowContactInfo(true);};
-  const changeMyColor=()=>{const c=prompt("Warna hex (cth: #ffcc00):",myBubbleColor);if(c){setMyBubbleColor(c);localStorage.setItem('bubbleColor',c);}};
-  const handleBgUpload=(e)=>{const f=e.target.files[0];if(f){const u=URL.createObjectURL(f);setChatBg(u);localStorage.setItem('chatBg',u);setShowMenu(false);}};
-  
+
+  const getBubbleInfo = (senderId, defaultUsername) => {
+      if (senderId === user.id) return { name: user.username, pic: user.profile_pic_url };
+      const saved = contacts.find(c => c.user_id === senderId);
+      if (saved) return { name: saved.display_name, pic: saved.profile_pic_url, bio: saved.bio, custom_id: saved.custom_id }; 
+      const incoming = incomingChats.find(c => c.id === senderId);
+      if (incoming) return { name: incoming.display_name, pic: incoming.profile_pic_url, bio: incoming.bio, custom_id: incoming.custom_id };
+      return { name: defaultUsername || "User", pic: null };
+  };
+
+  const handleHeaderClick = () => {
+    if (activeChat.is_group) setShowGroupInfo(true);
+    else setShowContactInfo(true); 
+  };
+
+  const changeMyColor = () => {
+     const c = prompt("Masukkan kode warna (cth: red, #ffcc00):", myBubbleColor);
+     if(c) { setMyBubbleColor(c); localStorage.setItem('bubbleColor', c); }
+  };
+
+  const handleBgUpload = (e) => {
+     const file = e.target.files[0];
+     if(file) {
+        const url = URL.createObjectURL(file);
+        setChatBg(url);
+        localStorage.setItem('chatBg', url);
+        setShowMenu(false);
+     }
+  };
+
   const renderReplyPreview = () => {
     if (!replyingTo) return null;
     const info = getBubbleInfo(replyingTo.sender_id, replyingTo.username || 'Seseorang');
@@ -314,7 +339,6 @@ export default function ChatPage() {
 
   return (
     <>
-      {/* --- CALL UI OVERLAY --- */}
       {((stream || receivingCall || callAccepted) && !callEnded) && (
         <div className="call-container">
            {receivingCall && !callAccepted ? (
@@ -342,8 +366,19 @@ export default function ChatPage() {
       {showModal && <AddContactModal setShowModal={setShowModal} onContactAdded={fetchData} />}
       {showProfileModal && <ProfileModal setShowModal={setShowProfileModal} />}
       {showGroupModal && <CreateGroupModal setShowModal={setShowGroupModal} onGroupCreated={fetchData} />}
-      {(showGroupInfo && activeChat?.is_group) && <GroupInfoModal chat={activeChat} setShowModal={setShowGroupInfo} onUpdate={fetchData} allContacts={contacts} />}
-      {(showContactInfo && !activeChat?.is_group && activeChat) && <ContactInfoModal contact={{...activeChat, ...getBubbleInfo(activeChat.id, activeChat.display_name)}} onClose={()=>setShowContactInfo(false)} onUpdate={fetchData} onDeleteChat={() => setMessages(p => ({...p, [activeChat.chat_id]: []}))} />}
+      
+      {(showGroupInfo && activeChat?.is_group) && (
+        <GroupInfoModal chat={activeChat} setShowModal={setShowGroupInfo} onUpdate={fetchData} allContacts={contacts} />
+      )}
+      
+      {(showContactInfo && !activeChat?.is_group && activeChat) && (
+        <ContactInfoModal 
+           contact={{...activeChat, ...getBubbleInfo(activeChat.id, activeChat.display_name)}} 
+           onClose={()=>setShowContactInfo(false)} 
+           onUpdate={fetchData} 
+           onDeleteChat={() => setMessages(p => ({...p, [activeChat.chat_id]: []}))}
+        />
+      )}
 
       <div className="app-container">
         <div className="sidebar">
@@ -351,16 +386,32 @@ export default function ChatPage() {
             <img src={user.profile_pic_url || 'https://via.placeholder.com/40'} className="user-avatar" onClick={() => setShowProfileModal(true)} alt="Profil" />
             <div className="header-icons" style={{position:'relative'}}>
                <button onClick={() => setShowMenu(!showMenu)} style={{border:'none',background:'transparent',cursor:'pointer',fontSize:'1.5em',color:'#54656f'}}>⋮</button>
-               {showMenu && (<div className="menu-dropdown" style={{top:'40px', right:'0'}}><label className="menu-item"><span>🖼️ Ubah Wallpaper</span><input type="file" accept="image/*" hidden onChange={handleBgUpload} /></label><div className="menu-item" onClick={()=>{changeMyColor(); setShowMenu(false)}}><span>🎨 Ubah Warna Bubble</span></div><div className="menu-item" onClick={logout} style={{borderTop:'1px solid #eee', color:'red'}}><span>🚪 Logout</span></div></div>)}
+               {showMenu && (
+                 <div className="menu-dropdown" style={{top:'40px', right:'0'}}>
+                    <label className="menu-item"><span>🖼️ Ubah Wallpaper</span><input type="file" accept="image/*" hidden onChange={handleBgUpload} /></label>
+                    <div className="menu-item" onClick={()=>{changeMyColor(); setShowMenu(false)}}><span>🎨 Ubah Warna Bubble</span></div>
+                    <div className="menu-item" onClick={logout} style={{borderTop:'1px solid #eee', color:'red'}}><span>🚪 Logout</span></div>
+                 </div>
+               )}
             </div>
           </div>
           <div className="search-bar"><div className="search-input-wrapper"><input type="text" placeholder="Cari" disabled /></div></div>
           
           <div className="contact-list">
              <div style={{padding:'10px 16px', fontWeight:'bold', color:'#008069', display:'flex', justifyContent:'space-between'}}>GRUP <button onClick={()=>setShowGroupModal(true)} style={{border:'none',background:'transparent',cursor:'pointer',color:'#008069',fontSize:'1.2em'}}>+</button></div>
-             {groups.map(item => (<div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><img src={item.group_icon_url || "https://via.placeholder.com/40?text=G"} className="contact-avatar"/><div className="contact-info"><div className="contact-name">{item.display_name}</div></div></div>))}
+             {groups.map(item => (
+                <div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}>
+                   <img src={item.group_icon_url || "https://via.placeholder.com/40?text=G"} className="contact-avatar" alt="Grup"/>
+                   <div className="contact-info"><div className="contact-name">{item.display_name}</div></div>
+                </div>
+             ))}
              <div style={{padding:'10px 16px', fontWeight:'bold', color:'#008069', display:'flex', justifyContent:'space-between', marginTop:'10px'}}>KONTAK <button onClick={()=>setShowModal(true)} style={{border:'none',background:'transparent',cursor:'pointer',color:'#008069',fontSize:'1.2em'}}>+</button></div>
-             {contacts.map(item => (<div key={item.contact_table_id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><div style={{position:'relative'}}><img src={item.profile_pic_url||'https://via.placeholder.com/40'} className="contact-avatar" alt="Kontak"/>{onlineUsers.has(item.id)&&<span className="online-dot" style={{position:'absolute',bottom:0,right:'10px',border:'2px solid #fff'}}></span>}</div><div className="contact-info"><div className="contact-name">{item.display_name}</div></div></div>))}
+             {contacts.map(item => (
+               <div key={item.contact_table_id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}>
+                 <div style={{position:'relative'}}><img src={item.profile_pic_url||'https://via.placeholder.com/40'} className="contact-avatar" alt="Kontak"/>{onlineUsers.has(item.id)&&<span className="online-dot" style={{position:'absolute',bottom:0,right:'10px',border:'2px solid #fff'}}></span>}</div>
+                 <div className="contact-info"><div className="contact-name">{item.display_name}</div></div>
+               </div>
+             ))}
              {incomingChats.map(item => ( <div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><div className="contact-info"><div className="contact-name">{item.display_name}</div><div className="contact-status">Pesan Baru</div></div></div> ))}
           </div>
         </div>
@@ -375,8 +426,8 @@ export default function ChatPage() {
                     <div className="header-status">{activeChat.is_group ? 'Klik info grup' : (onlineUsers.has(activeChat.id)?'Online':'')}</div>
                  </div>
                  <div style={{marginLeft:'auto', display:'flex', gap:'15px', color:'#54656f'}}>
-                    <button onClick={(e)=>{e.stopPropagation(); handleCall(true)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}} title="Video Call">📹</button>
-                    <button onClick={(e)=>{e.stopPropagation(); handleCall(false)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}} title="Voice Call">📞</button>
+                    <button onClick={(e)=>{e.stopPropagation(); handleCall(true)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}}>📹</button>
+                    <button onClick={(e)=>{e.stopPropagation(); handleCall(false)}} style={{background:'none', border:'none', cursor:'pointer', fontSize:'18px'}}>📞</button>
                  </div>
               </div>
               
@@ -385,7 +436,8 @@ export default function ChatPage() {
                   const bubbleInfo = getBubbleInfo(msg.sender_id, msg.username);
                   const isMe = msg.sender_id === user.id;
                   const msgDate = new Date(msg.created_at).toDateString();
-                  let showDate = false; if (msgDate !== lastDate) { showDate = true; lastDate = msgDate; }
+                  let showDate = false;
+                  if (msgDate !== lastDate) { showDate = true; lastDate = msgDate; }
 
                   return (
                     <React.Fragment key={msg.id || index}>
