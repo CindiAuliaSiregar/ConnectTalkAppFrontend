@@ -5,6 +5,10 @@ const API_URL = 'https://reportorially-unpsychopathic-sona.ngrok-free.dev/api';
 
 const apiClient = axios.create({
   baseURL: API_URL,
+  headers: {
+    "ngrok-skip-browser-warning": "true",
+    "Content-Type": "application/json"
+  }
 });
 
 // Ini penting! 'interceptor' ini akan otomatis
