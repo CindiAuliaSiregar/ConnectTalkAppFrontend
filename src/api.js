@@ -1,7 +1,7 @@
 // src/api.js
 import axios from 'axios';
 
-const API_URL = 'https://floppy-bikes-kneel.loca.lt';
+const API_URL = '/api';
 
 const apiClient = axios.create({
   baseURL: API_URL,

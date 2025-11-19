@@ -1,7 +1,7 @@
 // src/socket.js (VERSI BARU)
 import { io } from 'socket.io-client';
 
-const URL = 'https://floppy-bikes-kneel.loca.lt';
+const URL = '/';
 
 // Buat instance socket
 const socket = io(URL, {

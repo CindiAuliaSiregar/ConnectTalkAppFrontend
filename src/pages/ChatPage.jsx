@@ -65,7 +65,7 @@ export default function ChatPage() {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [typingUser, setTypingUser] = useState(null);
 
-  // STATE CALL (Video/Voice)
+  // STATE CALL
   const [stream, setStream] = useState(null);
   const [receivingCall, setReceivingCall] = useState(false);
   const [caller, setCaller] = useState("");
@@ -73,7 +73,7 @@ export default function ChatPage() {
   const [callAccepted, setCallAccepted] = useState(false);
   const [callEnded, setCallEnded] = useState(false);
   const [nameCaller, setNameCaller] = useState("");
-  const [isVideoCall, setIsVideoCall] = useState(true); // State tipe panggilan
+  const [isVideoCall, setIsVideoCall] = useState(true);
 
   // STATE KUSTOMISASI
   const [myBubbleColor, setMyBubbleColor] = useState(localStorage.getItem('bubbleColor') || '#dcf8c6'); 
@@ -94,7 +94,6 @@ export default function ChatPage() {
   useEffect(() => { incomingChatsRef.current = incomingChats; }, [incomingChats]);
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
 
-  // --- FETCH DATA ---
   const fetchData = async () => {
     try {
       const resContacts = await getContacts();
@@ -108,19 +107,19 @@ export default function ChatPage() {
     } catch (err) { console.error(err); }
   };
 
-  // --- SOCKET & LOGIC UTAMA ---
   useEffect(() => {
     if (!user) return;
     socket.connect();
     fetchData();
 
-    // Listener Call (Menangani Video vs Voice)
+    // Listener Call
     socket.on("callUser", (data) => {
       setReceivingCall(true);
       setCaller(data.from);
       setNameCaller(data.name);
       setCallerSignal(data.signal);
-      setIsVideoCall(data.isVideoCall); // <-- Simpan tipe panggilan dari penelpon
+      setIsVideoCall(data.isVideoCall);
+      setCallEnded(false);
     });
     socket.on("callEnded", () => leaveCall());
 
@@ -183,48 +182,47 @@ export default function ChatPage() {
 
   useEffect(() => { if (messageListRef.current) messageListRef.current.scrollTop = messageListRef.current.scrollHeight; }, [messages, activeChat, replyingTo]);
 
-  // --- LOGIKA CALL (FIXED VIDEO vs VOICE) ---
+  // --- LOGIKA CALL ---
   const handleCall = (isVid) => {
      if (!activeChat || activeChat.is_group) return alert("Panggilan grup belum tersedia");
      setIsVideoCall(isVid);
      
-     // Jika Voice Call, video: false
      navigator.mediaDevices.getUserMedia({ video: isVid, audio: true }).then((stream) => {
         setStream(stream);
         setCallEnded(false);
         if(myVideo.current) myVideo.current.srcObject = stream;
         
-        const peer = new SimplePeer({ initiator: true, trickle: false, stream: stream });
+        const peer = new SimplePeer({ 
+            initiator: true, trickle: false, stream: stream,
+            config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+        });
         
         peer.on("signal", (data) => {
            socket.emit("callUser", { 
-             userToCall: activeChat.id, 
-             signalData: data, 
-             from: user.id, 
-             name: user.username, 
-             isVideoCall: isVid // Kirim tipe call
+             userToCall: activeChat.id, signalData: data, from: user.id, name: user.username, isVideoCall: isVid 
            });
         });
-        
         peer.on("stream", (stream) => { if(userVideo.current) userVideo.current.srcObject = stream; });
         socket.on("callAccepted", (signal) => { setCallAccepted(true); peer.signal(signal); });
         connectionRef.current = peer;
         
-        // --- CATAT RIWAYAT ---
         const callText = isVid ? "📹 Panggilan Video" : "📞 Panggilan Suara";
         socket.emit('sendMessage', { chatId: activeChat.chat_id, content: callText, type: 'call_history' });
-        
+
      }).catch(e => alert("Gagal akses media: " + e));
   };
 
   const answerCall = () => {
     setCallAccepted(true);
-    // Jawab sesuai tipe panggilan yang diterima
     navigator.mediaDevices.getUserMedia({ video: isVideoCall, audio: true }).then((stream) => {
       setStream(stream);
       if(myVideo.current) myVideo.current.srcObject = stream;
       
-      const peer = new SimplePeer({ initiator: false, trickle: false, stream: stream });
+      const peer = new SimplePeer({ 
+          initiator: false, trickle: false, stream: stream,
+          config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+      });
+
       peer.on("signal", (data) => socket.emit("answerCall", { signal: data, to: caller }));
       peer.on("stream", (stream) => { if(userVideo.current) userVideo.current.srcObject = stream; });
       peer.signal(callerSignal);
@@ -240,7 +238,6 @@ export default function ChatPage() {
     if(caller) socket.emit("endCall", { to: caller });
     window.location.reload();
   };
-  // -------------------
 
   const handleSelectChat=async(i)=>{setReplyingTo(null);if(i.type==='contact'&&!i.chat_id){try{const r=await findOrCreateChat(i.user_id);const c=r.data.chat_id;setContacts(p=>p.map(x=>x.id===i.id?{...x,chat_id:c}:x));setActiveChat({...i,chat_id:c});loadMessages(c);}catch(e){}}else{setActiveChat(i);loadMessages(i.chat_id);}};
   const loadMessages=async(c)=>{socket.emit('joinRoom',c);try{const r=await getMessagesForChat(c);setMessages(p=>({...p,[c]:r.data}));socket.emit('markAsRead',{chatId:c});}catch(e){}};
@@ -248,89 +245,30 @@ export default function ChatPage() {
   const handleKeyDown=(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleSubmitMessage();}};
   const handleFileUpload=async(e)=>{const f=e.target.files[0];if(!f||!activeChat)return;let t='file';if(f.type.startsWith('image/'))t='image';else if(f.type.startsWith('video/'))t='video';try{const n=`${Date.now()}_${f.name.replace(/[^a-zA-Z0-9.]/g,'_')}`;const {error}=await supabase.storage.from('chat-images').upload(`${activeChat.chat_id}/${n}`,f);if(error)throw error;const {data}=supabase.storage.from('chat-images').getPublicUrl(`${activeChat.chat_id}/${n}`);socket.emit('sendMessage',{chatId:activeChat.chat_id,content:data.publicUrl,type:t,replyToId:replyingTo?replyingTo.id:null});setReplyingTo(null);}catch(e){alert("Gagal upload");}};
   
-  // --- FUNGSI HAPUS PESAN (OPTIMISTIC UPDATE / INSTAN) ---
   const handleDeleteMessage = async (msg) => {
     const isMe = msg.sender_id === user.id;
     const isAdmin = activeChat.is_group && activeChat.role === 'admin';
     let mode = null;
-    
     if (isMe || isAdmin) {
        const choice = prompt("Ketik '1' Hapus Untuk Saya\nKetik '2' Hapus Untuk Semua");
        if (choice === '1') mode = 'me'; else if (choice === '2') mode = 'everyone'; else return;
     } else {
-       if(!confirm("Hapus pesan ini untuk saya?")) return;
+       if(!confirm("Hapus?")) return;
        mode = 'me';
     }
-
     try {
-      // 1. Panggil API
       await deleteMessage(msg.id, mode);
-      
-      // 2. UPDATE TAMPILAN SECARA INSTAN (Optimistic)
-      setMessages(prev => {
-        const chatId = activeChat.chat_id;
-        const currentList = prev[chatId] || [];
-        if (mode === 'everyone') {
-            return {
-                ...prev,
-                [chatId]: currentList.map(m => m.id === msg.id ? { ...m, is_deleted: true, content: '🚫 Pesan ini telah dihapus', deleted_by: user.id, deleter_name: user.username } : m)
-            };
-        } else {
-            return { ...prev, [chatId]: currentList.filter(m => m.id !== msg.id) };
-        }
-      });
-
-      // 3. Kirim Socket jika hapus semua
-      if (mode === 'everyone') {
-         socket.emit('messageDeletedEveryone', { chatId: activeChat.chat_id, messageId: msg.id });
-      }
+      if (mode === 'everyone') socket.emit('messageDeletedEveryone', { chatId: activeChat.chat_id, messageId: msg.id });
+      else setMessages(prev => ({...prev, [activeChat.chat_id]: prev[activeChat.chat_id].filter(m => m.id !== msg.id)}));
     } catch (err) { alert("Gagal menghapus"); console.error(err); }
   };
   
   const onEmojiClick = (emoji) => setMessageInput(p => p + emoji.emoji);
-
-  const getBubbleInfo = (senderId, defaultUsername) => {
-      if (senderId === user.id) return { name: user.username, pic: user.profile_pic_url };
-      const saved = contacts.find(c => c.user_id === senderId);
-      if (saved) return { name: saved.display_name, pic: saved.profile_pic_url, bio: saved.bio, custom_id: saved.custom_id }; 
-      const incoming = incomingChats.find(c => c.id === senderId);
-      if (incoming) return { name: incoming.display_name, pic: incoming.profile_pic_url, bio: incoming.bio, custom_id: incoming.custom_id };
-      return { name: defaultUsername || "User", pic: null };
-  };
-
-  const handleHeaderClick = () => {
-    if (activeChat.is_group) setShowGroupInfo(true);
-    else setShowContactInfo(true); 
-  };
-
-  const changeMyColor = () => {
-     const c = prompt("Masukkan kode warna (cth: red, #ffcc00):", myBubbleColor);
-     if(c) { setMyBubbleColor(c); localStorage.setItem('bubbleColor', c); }
-  };
-
-  const handleBgUpload = (e) => {
-     const file = e.target.files[0];
-     if(file) {
-        const url = URL.createObjectURL(file);
-        setChatBg(url);
-        localStorage.setItem('chatBg', url);
-        setShowMenu(false);
-     }
-  };
-
-  const renderReplyPreview = () => {
-    if (!replyingTo) return null;
-    const info = getBubbleInfo(replyingTo.sender_id, replyingTo.username || 'Seseorang');
-    return (
-      <div style={{background:'#f0f2f5', padding:'5px 10px', borderLeft:'5px solid #008069', display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'5px'}}>
-         <div style={{fontSize:'12px', color:'#555', flex:1}}>
-            <div style={{color:'#008069', fontWeight:'bold'}}>Membalas {info.name}</div>
-            <div style={{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'300px'}}>{replyingTo.type==='image'?'📷 Foto':replyingTo.content}</div>
-         </div>
-         <button onClick={()=>setReplyingTo(null)} style={{border:'none',background:'transparent',fontSize:'16px',cursor:'pointer',marginLeft:'10px'}}>✖</button>
-      </div>
-    )
-  };
+  const getBubbleInfo=(sid,dun)=>{if(sid===user.id)return{name:user.username,pic:user.profile_pic_url};const s=contacts.find(c=>c.user_id===sid);if(s)return{name:s.display_name,pic:s.profile_pic_url,bio:s.bio,custom_id:s.custom_id};const i=incomingChats.find(c=>c.id===sid);if(i)return{name:i.display_name,pic:i.profile_pic_url,bio:i.bio,custom_id:i.custom_id};return{name:dun||"User",pic:null};};
+  const handleHeaderClick=()=>{if(activeChat.is_group)setShowGroupInfo(true);else setShowContactInfo(true);};
+  const changeMyColor=()=>{const c=prompt("Warna hex (cth: #ffcc00):",myBubbleColor);if(c){setMyBubbleColor(c);localStorage.setItem('bubbleColor',c);}};
+  const handleBgUpload=(e)=>{const f=e.target.files[0];if(f){const u=URL.createObjectURL(f);setChatBg(u);localStorage.setItem('chatBg',u);setShowMenu(false);}};
+  const renderReplyPreview=()=>{if(!replyingTo)return null;const info=getBubbleInfo(replyingTo.sender_id,replyingTo.username||'Seseorang');return(<div style={{background:'#f0f2f5',padding:'5px 10px',borderLeft:'5px solid #008069',display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'5px'}}><div style={{fontSize:'12px',color:'#555',flex:1}}><div style={{color:'#008069',fontWeight:'bold'}}>Membalas {info.name}</div><div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'300px'}}>{replyingTo.type==='image'?'📷 Foto':replyingTo.content}</div></div><button onClick={()=>setReplyingTo(null)} style={{border:'none',background:'transparent',fontSize:'16px',cursor:'pointer',marginLeft:'10px'}}>✖</button></div>)};
 
   if (!user) return <div>Loading...</div>;
   const currentMessages = activeChat ? messages[activeChat.chat_id] || [] : [];
@@ -339,24 +277,34 @@ export default function ChatPage() {
 
   return (
     <>
+      {/* --- CALL UI OVERLAY --- */}
       {((stream || receivingCall || callAccepted) && !callEnded) && (
-        <div className="call-container">
+        <div className="call-overlay">
            {receivingCall && !callAccepted ? (
-             <div className="incoming-call-card">
-                <h3>{nameCaller} memanggil ({isVideoCall ? 'Video' : 'Suara'})...</h3>
-                <div style={{display:'flex', gap:'10px', justifyContent:'center', marginTop:'10px'}}>
+             <div className="incoming-call-popup">
+                <div className="incoming-name">{nameCaller} is calling...</div>
+                <div className="incoming-type">{isVideoCall ? "Video" : "Audio"} Call</div>
+                <div className="call-actions">
                    <button className="call-btn btn-answer" onClick={answerCall}>📞</button>
                    <button className="call-btn btn-end" onClick={leaveCall}>❌</button>
                 </div>
              </div>
            ) : (
-             <div className="video-grid">
-                {callAccepted && !callEnded && (
-                   isVideoCall ? <video playsInline ref={userVideo} autoPlay className="user-video" /> : <div className="audio-call-view"><img src="https://via.placeholder.com/150" className="audio-avatar-large" alt="User" /><h3>Terhubung (Suara)</h3></div>
-                )}
-                {stream && isVideoCall && <video playsInline muted ref={myVideo} autoPlay className="my-video" />}
-                <div style={{position:'absolute', bottom:'20px', display:'flex', gap:'20px'}}>
-                    <button className="call-btn btn-end" onClick={leaveCall}>❌ Akhiri</button>
+             <div className="call-window">
+                <div className="video-grid">
+                  {callAccepted && !callEnded ? (
+                     isVideoCall ? <video playsInline ref={userVideo} autoPlay className="remote-video" /> 
+                     : <div className="voice-call-view"><img src="https://via.placeholder.com/150" className="call-avatar-large"/><h3>Terhubung (Suara)</h3></div>
+                  ) : (
+                     <div className="voice-call-view"><div className="call-name">Memanggil...</div></div>
+                  )}
+
+                  {stream && isVideoCall && <video playsInline muted ref={myVideo} autoPlay className="my-video" />}
+                  {!isVideoCall && <video playsInline ref={userVideo} autoPlay style={{display:'none'}} />}
+                </div>
+                
+                <div className="call-controls-bar">
+                    <button className="end-call-floating" onClick={leaveCall}>📞</button>
                 </div>
              </div>
            )}
@@ -366,52 +314,25 @@ export default function ChatPage() {
       {showModal && <AddContactModal setShowModal={setShowModal} onContactAdded={fetchData} />}
       {showProfileModal && <ProfileModal setShowModal={setShowProfileModal} />}
       {showGroupModal && <CreateGroupModal setShowModal={setShowGroupModal} onGroupCreated={fetchData} />}
-      
-      {(showGroupInfo && activeChat?.is_group) && (
-        <GroupInfoModal chat={activeChat} setShowModal={setShowGroupInfo} onUpdate={fetchData} allContacts={contacts} />
-      )}
-      
-      {(showContactInfo && !activeChat?.is_group && activeChat) && (
-        <ContactInfoModal 
-           contact={{...activeChat, ...getBubbleInfo(activeChat.id, activeChat.display_name)}} 
-           onClose={()=>setShowContactInfo(false)} 
-           onUpdate={fetchData} 
-           onDeleteChat={() => setMessages(p => ({...p, [activeChat.chat_id]: []}))}
-        />
-      )}
+      {(showGroupInfo && activeChat?.is_group) && <GroupInfoModal chat={activeChat} setShowModal={setShowGroupInfo} onUpdate={fetchData} allContacts={contacts} />}
+      {(showContactInfo && !activeChat?.is_group && activeChat) && <ContactInfoModal contact={{...activeChat, ...getBubbleInfo(activeChat.id, activeChat.display_name)}} onClose={()=>setShowContactInfo(false)} onUpdate={fetchData} onDeleteChat={() => setMessages(p => ({...p, [activeChat.chat_id]: []}))} />}
 
-      <div className="app-container">
+      <div className={`app-container ${activeChat ? 'chat-active' : ''}`}>
         <div className="sidebar">
           <div className="sidebar-header">
             <img src={user.profile_pic_url || 'https://via.placeholder.com/40'} className="user-avatar" onClick={() => setShowProfileModal(true)} alt="Profil" />
             <div className="header-icons" style={{position:'relative'}}>
                <button onClick={() => setShowMenu(!showMenu)} style={{border:'none',background:'transparent',cursor:'pointer',fontSize:'1.5em',color:'#54656f'}}>⋮</button>
-               {showMenu && (
-                 <div className="menu-dropdown" style={{top:'40px', right:'0'}}>
-                    <label className="menu-item"><span>🖼️ Ubah Wallpaper</span><input type="file" accept="image/*" hidden onChange={handleBgUpload} /></label>
-                    <div className="menu-item" onClick={()=>{changeMyColor(); setShowMenu(false)}}><span>🎨 Ubah Warna Bubble</span></div>
-                    <div className="menu-item" onClick={logout} style={{borderTop:'1px solid #eee', color:'red'}}><span>🚪 Logout</span></div>
-                 </div>
-               )}
+               {showMenu && (<div className="menu-dropdown" style={{top:'40px', right:'0'}}><label className="menu-item"><span>🖼️ Ubah Wallpaper</span><input type="file" accept="image/*" hidden onChange={handleBgUpload} /></label><div className="menu-item" onClick={()=>{changeMyColor(); setShowMenu(false)}}><span>🎨 Ubah Warna Bubble</span></div><div className="menu-item" onClick={logout} style={{borderTop:'1px solid #eee', color:'red'}}><span>🚪 Logout</span></div></div>)}
             </div>
           </div>
           <div className="search-bar"><div className="search-input-wrapper"><input type="text" placeholder="Cari" disabled /></div></div>
           
           <div className="contact-list">
              <div style={{padding:'10px 16px', fontWeight:'bold', color:'#008069', display:'flex', justifyContent:'space-between'}}>GRUP <button onClick={()=>setShowGroupModal(true)} style={{border:'none',background:'transparent',cursor:'pointer',color:'#008069',fontSize:'1.2em'}}>+</button></div>
-             {groups.map(item => (
-                <div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}>
-                   <img src={item.group_icon_url || "https://via.placeholder.com/40?text=G"} className="contact-avatar" alt="Grup"/>
-                   <div className="contact-info"><div className="contact-name">{item.display_name}</div></div>
-                </div>
-             ))}
+             {groups.map(item => (<div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><img src={item.group_icon_url || "https://via.placeholder.com/40?text=G"} className="contact-avatar"/><div className="contact-info"><div className="contact-name">{item.display_name}</div></div></div>))}
              <div style={{padding:'10px 16px', fontWeight:'bold', color:'#008069', display:'flex', justifyContent:'space-between', marginTop:'10px'}}>KONTAK <button onClick={()=>setShowModal(true)} style={{border:'none',background:'transparent',cursor:'pointer',color:'#008069',fontSize:'1.2em'}}>+</button></div>
-             {contacts.map(item => (
-               <div key={item.contact_table_id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}>
-                 <div style={{position:'relative'}}><img src={item.profile_pic_url||'https://via.placeholder.com/40'} className="contact-avatar" alt="Kontak"/>{onlineUsers.has(item.id)&&<span className="online-dot" style={{position:'absolute',bottom:0,right:'10px',border:'2px solid #fff'}}></span>}</div>
-                 <div className="contact-info"><div className="contact-name">{item.display_name}</div></div>
-               </div>
-             ))}
+             {contacts.map(item => (<div key={item.contact_table_id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><div style={{position:'relative'}}><img src={item.profile_pic_url||'https://via.placeholder.com/40'} className="contact-avatar" alt="Kontak"/>{onlineUsers.has(item.id)&&<span className="online-dot" style={{position:'absolute',bottom:0,right:'10px',border:'2px solid #fff'}}></span>}</div><div className="contact-info"><div className="contact-name">{item.display_name}</div></div></div>))}
              {incomingChats.map(item => ( <div key={item.id} onClick={()=>handleSelectChat(item)} className={`contact-item ${activeChat?.id===item.id?'active':''}`}><div className="contact-info"><div className="contact-name">{item.display_name}</div><div className="contact-status">Pesan Baru</div></div></div> ))}
           </div>
         </div>
@@ -420,6 +341,8 @@ export default function ChatPage() {
           {!activeChat ? <div className="empty-chat-placeholder">Pilih chat</div> : (
             <>
               <div className="chat-header" style={{cursor:'pointer'}} onClick={handleHeaderClick}>
+                 {/* TOMBOL BACK HP */}
+                 <button className="back-btn" onClick={(e)=>{e.stopPropagation(); setActiveChat(null)}}>←</button>
                  <img src={activeChat.is_group ? (activeChat.group_icon_url||"https://via.placeholder.com/40?text=G") : (getBubbleInfo(activeChat.id, activeChat.display_name).pic||'https://via.placeholder.com/40')} className="header-avatar" />
                  <div className="header-info">
                     <div className="header-name">{activeChat.display_name}</div>
@@ -436,21 +359,19 @@ export default function ChatPage() {
                   const bubbleInfo = getBubbleInfo(msg.sender_id, msg.username);
                   const isMe = msg.sender_id === user.id;
                   const msgDate = new Date(msg.created_at).toDateString();
-                  let showDate = false;
-                  if (msgDate !== lastDate) { showDate = true; lastDate = msgDate; }
+                  let showDate = false; if (msgDate !== lastDate) { showDate = true; lastDate = msgDate; }
 
                   return (
-                    <React.Fragment key={msg.id || index}>
+                    <React.Fragment key={msg.id ? `msg-${msg.id}` : `idx-${index}`}>
                       {showDate && <div style={{display:'flex', justifyContent:'center', margin:'10px 0'}}><span style={{background:'#e1f3fb', color:'#1c1e21', padding:'5px 12px', borderRadius:'8px', fontSize:'12px', boxShadow:'0 1px 2px rgba(0,0,0,0.1)'}}>{formatDateSeparator(msg.created_at)}</span></div>}
                       <div className={`message-row ${isMe ? 'row-me' : 'row-other'}`}>
                         <div className={`message-bubble ${isMe ? 'bubble-me' : 'bubble-other'}`} style={isMe ? {backgroundColor: myBubbleColor} : {}} onDoubleClick={() => setReplyingTo(msg)}>
                            {msg.reply_to_id && (<div style={{background:'rgba(0,0,0,0.05)', padding:'5px', borderRadius:'5px', borderLeft:'4px solid #008069', marginBottom:'5px', fontSize:'12px', cursor:'pointer'}}><div style={{color:'#008069', fontWeight:'bold'}}>{msg.reply_username || "Seseorang"}</div><div style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{msg.reply_content}</div></div>)}
                            {(!isMe && activeChat.is_group) && <div className="bubble-name" style={{color: getNameColor(bubbleInfo.name)}}>{bubbleInfo.name}</div>}
                            
-                           {/* KONTEN PESAN (TERMASUK CALL HISTORY) */}
                            {msg.is_deleted ? <i style={{color:'#888'}}>🚫 Pesan dihapus {msg.deleter_name && `oleh ${msg.deleter_name}`}</i> 
                            : msg.type === 'call_history' ? <div className="bubble-system-call" style={{background:'#e1f3fb', padding:'8px 15px', borderRadius:'8px', fontSize:'13px', display:'flex', alignItems:'center', gap:'8px', border:'1px solid #b3e5fc'}}>{msg.content.includes('Video')?'📹':'📞'} {msg.content}</div>
-                           : msg.type === 'image' ? <img src={msg.content} style={{maxWidth:'100%', borderRadius:'8px', cursor:'pointer'}} onClick={()=>window.open(msg.content)} /> 
+                           : msg.type === 'image' ? <img src={msg.content} style={{maxWidth:'100%', borderRadius:'8px', cursor:'pointer'}} onClick={()=>window.open(msg.content)} alt="img" /> 
                            : msg.type === 'video' ? <video src={msg.content} controls style={{maxWidth:'100%', borderRadius:'8px'}} /> 
                            : msg.type === 'file' ? <a href={msg.content} target="_blank" rel="noreferrer" style={{textDecoration:'none', color:'#333'}}>📄 {msg.content.split('/').pop().substr(14)}</a> 
                            : <div style={{whiteSpace: 'pre-wrap'}} className="bubble-text">{msg.content}</div>}
