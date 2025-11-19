@@ -1,12 +1,11 @@
 // src/api.js
 import axios from 'axios';
 
-const API_URL = 'https://reportorially-unpsychopathic-sona.ngrok-free.dev/api';
+const API_URL = 'https://floppy-bikes-kneel.loca.lt';
 
 const apiClient = axios.create({
   baseURL: API_URL,
   headers: {
-    "ngrok-skip-browser-warning": "true",
     "Content-Type": "application/json"
   }
 });
